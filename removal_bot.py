@@ -73,22 +73,47 @@ driver = None
 #  Pipeline Canvas Widget
 # ──────────────────────────────────────────────
 class PipelineCanvas(tk.Canvas):
-    """n8n-style horizontal pipeline visualization."""
+    """n8n-style horizontal pipeline with real-time animated updates."""
 
     def __init__(self, master, steps, **kwargs):
-        super().__init__(master, bg=COLORS["bg"], highlightthickness=0, height=100, **kwargs)
+        super().__init__(master, bg=COLORS["bg"], highlightthickness=0, height=120, **kwargs)
         self.steps = steps
         self.states = {s["id"]: STATE_IDLE for s in steps}
+        self._pulse_frame = 0
+        self._pulse_job = None
         self.bind("<Configure>", lambda e: self.draw())
 
     def set_state(self, step_id, state):
+        """Thread-safe state update — always dispatches to main thread."""
+        self.after(0, lambda: self._apply_state(step_id, state))
+
+    def _apply_state(self, step_id, state):
         self.states[step_id] = state
         self.draw()
+        # Start or stop the pulse animation
+        has_running = any(s == STATE_RUNNING for s in self.states.values())
+        if has_running and self._pulse_job is None:
+            self._start_pulse()
+        elif not has_running and self._pulse_job is not None:
+            self._stop_pulse()
 
     def reset(self):
         for s in self.steps:
             self.states[s["id"]] = STATE_IDLE
+        self._stop_pulse()
+        self._pulse_frame = 0
         self.draw()
+
+    def _start_pulse(self):
+        """Animate the running indicator with a breathing glow."""
+        self._pulse_frame += 1
+        self.draw()
+        self._pulse_job = self.after(80, self._start_pulse)
+
+    def _stop_pulse(self):
+        if self._pulse_job is not None:
+            self.after_cancel(self._pulse_job)
+            self._pulse_job = None
 
     def draw(self):
         self.delete("all")
@@ -103,29 +128,52 @@ class PipelineCanvas(tk.Canvas):
         gap = 32
         total_w = n * node_w + (n - 1) * gap
         start_x = (w - total_w) / 2
+        # Pulse alpha cycles 0..15 for breathing effect
+        pulse = abs((self._pulse_frame % 30) - 15)
 
         for i, step in enumerate(self.steps):
             x = start_x + i * (node_w + gap)
-            y = (h - node_h) / 2
+            y = (h - node_h) / 2 - 4  # shift up slightly for subtitle room
             state = self.states[step["id"]]
 
-            # Draw connector line to next node
+            # ── Connector arrow to next node ──
             if i < n - 1:
                 cx_start = x + node_w
                 cx_end = x + node_w + gap
-                cy = h / 2
-                # Determine if connector is active
+                cy = y + node_h / 2
+                # Active if all steps up to and including this one are done
                 prev_done = all(
-                    self.states[self.steps[j]["id"]] in (STATE_DONE,)
+                    self.states[self.steps[j]["id"]] == STATE_DONE
                     for j in range(i + 1)
                 )
-                line_color = COLORS["connector_active"] if prev_done else COLORS["connector"]
-                self.create_line(
-                    cx_start, cy, cx_end, cy,
-                    fill=line_color, width=2, arrow=tk.LAST, arrowshape=(8, 10, 4),
-                )
+                # Animated connector: pulse if the *next* step is running
+                next_running = self.states[self.steps[i + 1]["id"]] == STATE_RUNNING
+                if next_running:
+                    # Animated flowing dots
+                    line_color = COLORS["accent"]
+                    self.create_line(
+                        cx_start, cy, cx_end, cy,
+                        fill=line_color, width=2, dash=(6, 4),
+                        dashoffset=self._pulse_frame % 10,
+                    )
+                    self.create_oval(
+                        cx_end - 5, cy - 5, cx_end + 5, cy + 5,
+                        fill=COLORS["accent"], outline="",
+                    )
+                elif prev_done:
+                    self.create_line(
+                        cx_start, cy, cx_end, cy,
+                        fill=COLORS["green"], width=2,
+                        arrow=tk.LAST, arrowshape=(8, 10, 4),
+                    )
+                else:
+                    self.create_line(
+                        cx_start, cy, cx_end, cy,
+                        fill=COLORS["connector"], width=2,
+                        arrow=tk.LAST, arrowshape=(8, 10, 4),
+                    )
 
-            # Node background
+            # ── Node colors ──
             bg = {
                 STATE_IDLE: COLORS["node_idle"],
                 STATE_RUNNING: COLORS["node_running"],
@@ -140,52 +188,73 @@ class PipelineCanvas(tk.Canvas):
                 STATE_ERROR: COLORS["red"],
             }[state]
 
-            # Rounded rectangle
-            r = 10
-            self._round_rect(x, y, x + node_w, y + node_h, r, fill=bg, outline=border, width=2)
+            border_w = 2
 
-            # Pulsing dot for running state
+            # ── Running glow ring ──
             if state == STATE_RUNNING:
-                self.create_oval(
-                    x + node_w - 16, y + 6, x + node_w - 6, y + 16,
-                    fill=COLORS["accent"], outline="",
+                glow_expand = 2 + pulse * 0.3
+                border_w = 3
+                self._round_rect(
+                    x - glow_expand, y - glow_expand,
+                    x + node_w + glow_expand, y + node_h + glow_expand,
+                    12, fill="", outline=COLORS["accent"], width=1,
                 )
 
-            # Check mark for done
-            if state == STATE_DONE:
-                self.create_oval(
-                    x + node_w - 18, y + 4, x + node_w - 4, y + 18,
-                    fill=COLORS["green"], outline="",
-                )
-                self.create_text(
-                    x + node_w - 11, y + 11,
-                    text="\u2713", fill="white", font=("Segoe UI", 8, "bold"),
-                )
+            # ── Node body ──
+            r = 10
+            self._round_rect(x, y, x + node_w, y + node_h, r, fill=bg, outline=border, width=border_w)
 
-            # X for error
-            if state == STATE_ERROR:
+            # ── Status badge (top-right) ──
+            bx, by = x + node_w - 11, y + 11
+            if state == STATE_RUNNING:
+                # Animated pulsing dot
+                sz = 5 + pulse * 0.2
                 self.create_oval(
-                    x + node_w - 18, y + 4, x + node_w - 4, y + 18,
-                    fill=COLORS["red"], outline="",
+                    bx - sz, by - sz, bx + sz, by + sz,
+                    fill=COLORS["accent"], outline="#a78bfa", width=1,
                 )
-                self.create_text(
-                    x + node_w - 11, y + 11,
-                    text="\u2717", fill="white", font=("Segoe UI", 8, "bold"),
-                )
+            elif state == STATE_DONE:
+                self.create_oval(bx - 7, by - 7, bx + 7, by + 7, fill=COLORS["green"], outline="")
+                self.create_text(bx, by, text="\u2713", fill="white", font=("Segoe UI", 7, "bold"))
+            elif state == STATE_ERROR:
+                self.create_oval(bx - 7, by - 7, bx + 7, by + 7, fill=COLORS["red"], outline="")
+                self.create_text(bx, by, text="\u2717", fill="white", font=("Segoe UI", 7, "bold"))
 
-            # Icon + Label
+            # ── Icon ──
+            icon_color = {
+                STATE_IDLE: COLORS["text_dim"],
+                STATE_RUNNING: "#a78bfa",
+                STATE_DONE: COLORS["green"],
+                STATE_ERROR: COLORS["red"],
+            }[state]
             self.create_text(
                 x + node_w / 2, y + 22,
-                text=step["icon"], fill="white", font=("Segoe UI", 14),
+                text=step["icon"], fill=icon_color, font=("Segoe UI", 14),
             )
+
+            # ── Label ──
+            label_color = COLORS["text"] if state != STATE_IDLE else COLORS["text_dim"]
             self.create_text(
                 x + node_w / 2, y + 44,
-                text=step["label"], fill=COLORS["text"], font=("Segoe UI", 9, "bold"),
+                text=step["label"], fill=label_color, font=("Segoe UI", 9, "bold"),
             )
-            # Subtitle below node
+
+            # ── Subtitle below node ──
+            sub_color = {
+                STATE_IDLE: COLORS["text_muted"],
+                STATE_RUNNING: COLORS["accent"],
+                STATE_DONE: COLORS["green"],
+                STATE_ERROR: COLORS["red"],
+            }[state]
+            sub_text = {
+                STATE_IDLE: step["desc"],
+                STATE_RUNNING: "Running...",
+                STATE_DONE: "Complete",
+                STATE_ERROR: "Failed",
+            }[state]
             self.create_text(
-                x + node_w / 2, y + node_h + 12,
-                text=step["desc"], fill=COLORS["text_dim"], font=("Segoe UI", 8),
+                x + node_w / 2, y + node_h + 14,
+                text=sub_text, fill=sub_color, font=("Segoe UI", 8),
             )
 
     def _round_rect(self, x1, y1, x2, y2, r, **kwargs):
@@ -396,7 +465,7 @@ pipeline_title = ctk.CTkLabel(
 pipeline_title.pack(anchor="w", padx=16, pady=(12, 0))
 
 pipeline = PipelineCanvas(pipeline_frame, PIPELINE_STEPS)
-pipeline.pack(fill="x", padx=12, pady=(4, 16))
+pipeline.pack(fill="x", padx=12, pady=(4, 12))
 
 # ── Input Card ──
 input_card = ctk.CTkFrame(app, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["card_border"])
