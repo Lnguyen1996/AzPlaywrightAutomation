@@ -4,8 +4,13 @@ Removal Bot - Modern desktop app with agent pipeline visualization.
 Attaches to existing Firefox via Marionette and automates Removals Central.
 """
 
+import base64
 import datetime
+import io
+import os
 import re
+import struct
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -27,6 +32,119 @@ from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.firefox import GeckoDriverManager
 
 URL = "https://removals-central-na.removal.scot.amazon.dev/createremovals/checkinventorypo"
+
+
+def _generate_icon_ico(size=32):
+    """Generate a simple .ico file (purple bot icon) using raw pixel data.
+
+    Returns the path to a temp .ico file, or None on failure.
+    """
+    try:
+        # Build a 32x32 RGBA image as raw pixels
+        pixels = []
+        cx, cy = size // 2, size // 2
+        for y in range(size):
+            for x in range(size):
+                dx, dy = x - cx, y - cy
+                dist = (dx * dx + dy * dy) ** 0.5
+                # Circular background
+                if dist <= 14:
+                    # Purple gradient base
+                    r, g, b, a = 124, 58, 237, 255  # #7c3aed
+                    # Lightning bolt shape (simple centered zigzag)
+                    # Bolt: columns 13-19, rows 6-26
+                    in_bolt = False
+                    if 8 <= y <= 14 and (14 - (y - 8)) <= x <= (18 - (y - 8)):
+                        in_bolt = True
+                    elif 14 <= y <= 16 and 11 <= x <= 20:
+                        in_bolt = True
+                    elif 16 <= y <= 24 and (12 + (y - 16)) <= x <= (17 + (y - 16)):
+                        in_bolt = True
+                    if in_bolt:
+                        r, g, b = 255, 255, 255
+                    # Outer ring glow
+                    if 12 < dist <= 14:
+                        r = min(255, r + 30)
+                        g = min(255, g + 15)
+                        b = min(255, b + 40)
+                else:
+                    r, g, b, a = 0, 0, 0, 0
+                pixels.append((b, g, r, a))  # BMP uses BGRA
+
+        # Build BMP DIB data (BITMAPINFOHEADER)
+        pixel_data = b""
+        for row in range(size - 1, -1, -1):  # BMP is bottom-up
+            for col in range(size):
+                bgra = pixels[row * size + col]
+                pixel_data += struct.pack("BBBB", *bgra)
+
+        # AND mask (1bpp) — all zeros = fully opaque (alpha channel handles it)
+        and_mask = b"\x00" * (size // 8) * size
+
+        bmp_size = 40 + len(pixel_data) + len(and_mask)
+        # BITMAPINFOHEADER
+        dib = struct.pack(
+            "<IiiHHIIiiII",
+            40,           # header size
+            size,         # width
+            size * 2,     # height (XOR + AND)
+            1,            # planes
+            32,           # bpp
+            0,            # compression
+            len(pixel_data) + len(and_mask),
+            0, 0, 0, 0,
+        )
+
+        # ICO file structure
+        ico_header = struct.pack("<HHH", 0, 1, 1)  # reserved, type=ico, count=1
+        data_offset = 6 + 16  # header + 1 directory entry
+        ico_dir = struct.pack(
+            "<BBBBHHII",
+            size if size < 256 else 0,  # width
+            size if size < 256 else 0,  # height
+            0,     # color count
+            0,     # reserved
+            1,     # planes
+            32,    # bpp
+            len(dib) + len(pixel_data) + len(and_mask),  # data size
+            data_offset,
+        )
+
+        ico_data = ico_header + ico_dir + dib + pixel_data + and_mask
+
+        # Write to temp file
+        icon_path = os.path.join(tempfile.gettempdir(), "removal_bot.ico")
+        with open(icon_path, "wb") as f:
+            f.write(ico_data)
+        return icon_path
+    except Exception:
+        return None
+
+
+def _generate_icon_photo(root):
+    """Generate a tkinter PhotoImage icon (fallback for Linux/Mac)."""
+    try:
+        img = tk.PhotoImage(width=32, height=32)
+        cx, cy = 16, 16
+        for y in range(32):
+            for x in range(32):
+                dx, dy = x - cx, y - cy
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist <= 14:
+                    # Check if in bolt shape
+                    in_bolt = False
+                    if 8 <= y <= 14 and (14 - (y - 8)) <= x <= (18 - (y - 8)):
+                        in_bolt = True
+                    elif 14 <= y <= 16 and 11 <= x <= 20:
+                        in_bolt = True
+                    elif 16 <= y <= 24 and (12 + (y - 16)) <= x <= (17 + (y - 16)):
+                        in_bolt = True
+                    color = "#ffffff" if in_bolt else "#7c3aed"
+                    img.put(color, (x, y))
+        return img
+    except Exception:
+        return None
+
 
 # ──────────────────────────────────────────────
 #  Pipeline Node States
@@ -486,6 +604,21 @@ app.title("Removal Bot")
 app.geometry("860x780")
 app.minsize(800, 700)
 app.configure(fg_color="#080810")
+
+# ── Set app icon ──
+_ico_path = _generate_icon_ico()
+if _ico_path and os.path.exists(_ico_path):
+    try:
+        app.iconbitmap(_ico_path)
+    except Exception:
+        pass
+# Fallback: iconphoto for Linux/Mac or if iconbitmap failed
+_icon_photo = _generate_icon_photo(app)
+if _icon_photo:
+    try:
+        app.iconphoto(True, _icon_photo)
+    except Exception:
+        pass
 
 # ── Scrollable container so everything fits ──
 main_frame = ctk.CTkFrame(app, fg_color="#080810", corner_radius=0)
