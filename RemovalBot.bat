@@ -21,7 +21,7 @@ if %errorlevel% neq 0 (
 :: Install dependencies if needed
 if not exist ".deps_installed" (
     echo Installing dependencies...
-    pip install selenium webdriver-manager
+    pip install selenium webdriver-manager customtkinter
     if %errorlevel% neq 0 (
         echo ERROR: Failed to install dependencies.
         pause
