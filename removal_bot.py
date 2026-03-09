@@ -364,108 +364,37 @@ def run_automation(asins, pipeline, status_callback):
         fnskus_input = wait.until(
             EC.presence_of_element_located((By.ID, "fnskus"))
         )
-        fnskus_input.clear()
-        # The form expects space-separated FNSKUs
-        fnskus_input.send_keys(" ".join(asins))
+        # Set the FNSKU value via JavaScript to guarantee space separation.
+        # send_keys() can produce commas on some pages; setting .value is safe.
+        asin_str = " ".join(asins)
+        drv.execute_script(
+            "var el = document.getElementById('fnskus');"
+            "el.value = arguments[0];"
+            "el.dispatchEvent(new Event('input', {bubbles:true}));"
+            "el.dispatchEvent(new Event('change', {bubbles:true}));",
+            asin_str,
+        )
         pipeline.set_state("fill", STATE_DONE)
-        status_callback(f"Filled {len(asins)} ASIN(s) into FNSKU(s) field.")
+        status_callback(f"Filled {len(asins)} ASIN(s): {asin_str}")
 
-        # ── Set Options (IOGS All, Removal Reasons All) ──
+        # ── Set Options ──
+        # The form defaults are already correct for IOGS (none),
+        # Warehouses (US pre-selected), and Removal Reasons (all selected).
+        # We only need to ensure Check Inventory radio is selected.
         pipeline.set_state("options", STATE_RUNNING)
-        status_callback("Setting IOGS to All...")
+        status_callback("Verifying form defaults (IOGS, Warehouses, Reasons)...")
 
-        # Use the page's own Components.Selector API to select everything.
-        # Just setting .checked or .selected doesn't trigger the page's
-        # onclick wiring — we must call the handlers directly.
         drv.execute_script("""
-            // ── IOGS: call the page's "select all" handler ──
-            // The All checkbox onclick calls:
-            //   Components.Selector.defaultSelectAllOrNone(
-            //       'iogs', this, 'iogs_checkbox_container')
-            // We simulate that by finding the All checkbox, checking it,
-            // then calling the function.
-            (function() {
-                var allCb = document.querySelector(
-                    '#iogs_checkbox_container input[type="checkbox"]'
-                );
-                if (allCb) {
-                    allCb.checked = true;
-                    if (typeof Components !== 'undefined' &&
-                        Components.Selector &&
-                        Components.Selector.defaultSelectAllOrNone) {
-                        Components.Selector.defaultSelectAllOrNone(
-                            'iogs', allCb, 'iogs_checkbox_container'
-                        );
-                    }
-                }
-                // Belt-and-suspenders: also select every <option>
-                var sel = document.getElementById('iogs');
-                if (sel) {
-                    for (var i = 0; i < sel.options.length; i++) {
-                        sel.options[i].selected = true;
-                    }
-                }
-            })();
-
-            // ── Warehouses: call the page's "select all" handler ──
-            (function() {
-                var allCb = document.querySelector(
-                    '#fcs_checkbox_container input[type="checkbox"]'
-                );
-                if (allCb) {
-                    allCb.checked = true;
-                    if (typeof Components !== 'undefined' &&
-                        Components.Selector &&
-                        Components.Selector.defaultSelectAllOrNone) {
-                        Components.Selector.defaultSelectAllOrNone(
-                            'fcs', allCb, 'fcs_checkbox_container'
-                        );
-                    }
-                }
-                var sel = document.getElementById('fcs');
-                if (sel) {
-                    for (var i = 0; i < sel.options.length; i++) {
-                        sel.options[i].selected = true;
-                    }
-                }
-            })();
-
-            // ── Removal Reasons: call the page's "select all" handler ──
-            (function() {
-                var allCb = document.querySelector(
-                    '#reasons_checkbox_container input[type="checkbox"]'
-                );
-                if (allCb) {
-                    allCb.checked = true;
-                    if (typeof Components !== 'undefined' &&
-                        Components.Selector &&
-                        Components.Selector.defaultSelectAllOrNone) {
-                        Components.Selector.defaultSelectAllOrNone(
-                            'reasons', allCb, 'reasons_checkbox_container'
-                        );
-                    }
-                }
-                var sel = document.getElementById('reasons');
-                if (sel) {
-                    for (var i = 0; i < sel.options.length; i++) {
-                        sel.options[i].selected = true;
-                    }
-                }
-            })();
-
-            // ── Check Inventory radio ──
+            // Ensure "Check Inventory" radio is selected
             var checkInv = document.getElementById('check-inventory');
-            if (checkInv) {
-                checkInv.checked = true;
-                if (typeof change_checked_info === 'function') {
-                    change_checked_info(checkInv);
-                }
+            if (checkInv && !checkInv.checked) {
+                checkInv.click();
             }
         """)
-        time.sleep(0.5)
+        time.sleep(0.3)
 
         pipeline.set_state("options", STATE_DONE)
-        status_callback("All options set (IOGS All, Reasons All, Check Inventory).")
+        status_callback("Options verified (defaults: IOGS none, Warehouses US, Reasons all).")
 
         # ── Click Search ──
         pipeline.set_state("search", STATE_RUNNING)
