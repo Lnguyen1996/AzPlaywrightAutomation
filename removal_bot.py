@@ -4,6 +4,7 @@ Removal Bot - Modern desktop app with agent pipeline visualization.
 Attaches to existing Firefox via Marionette and automates Removals Central.
 """
 
+import datetime
 import re
 import threading
 import time
@@ -363,11 +364,9 @@ def run_automation(asins, pipeline, status_callback):
         fnskus_input = wait.until(
             EC.presence_of_element_located((By.ID, "fnskus"))
         )
-        # Set value via JS to avoid any send_keys encoding issues
-        asin_str = " ".join(asins)
-        drv.execute_script(
-            "arguments[0].value = arguments[1];", fnskus_input, asin_str
-        )
+        fnskus_input.clear()
+        # The form expects space-separated FNSKUs
+        fnskus_input.send_keys(" ".join(asins))
         pipeline.set_state("fill", STATE_DONE)
         status_callback(f"Filled {len(asins)} ASIN(s) into FNSKU(s) field.")
 
@@ -375,38 +374,84 @@ def run_automation(asins, pipeline, status_callback):
         pipeline.set_state("options", STATE_RUNNING)
         status_callback("Setting IOGS to All...")
 
-        # The checkboxes are inside collapsed/hidden containers.  We must
-        # call the page's own Components.Selector helpers directly so that
-        # both the checkboxes AND the underlying <select> options get set.
+        # Use the page's own Components.Selector API to select everything.
+        # Just setting .checked or .selected doesn't trigger the page's
+        # onclick wiring — we must call the handlers directly.
         drv.execute_script("""
-            // Helper: select ALL options in a <select multiple>
-            function selectAll(selectId) {
-                var sel = document.getElementById(selectId);
-                if (!sel) return;
-                for (var i = 0; i < sel.options.length; i++) {
-                    sel.options[i].selected = true;
-                }
-            }
-
-            // Helper: check all checkboxes in a container
-            function checkAllBoxes(containerId) {
-                var cbs = document.querySelectorAll(
-                    '#' + containerId + ' input[type="checkbox"]'
+            // ── IOGS: call the page's "select all" handler ──
+            // The All checkbox onclick calls:
+            //   Components.Selector.defaultSelectAllOrNone(
+            //       'iogs', this, 'iogs_checkbox_container')
+            // We simulate that by finding the All checkbox, checking it,
+            // then calling the function.
+            (function() {
+                var allCb = document.querySelector(
+                    '#iogs_checkbox_container input[type="checkbox"]'
                 );
-                cbs.forEach(function(cb) { cb.checked = true; });
-            }
+                if (allCb) {
+                    allCb.checked = true;
+                    if (typeof Components !== 'undefined' &&
+                        Components.Selector &&
+                        Components.Selector.defaultSelectAllOrNone) {
+                        Components.Selector.defaultSelectAllOrNone(
+                            'iogs', allCb, 'iogs_checkbox_container'
+                        );
+                    }
+                }
+                // Belt-and-suspenders: also select every <option>
+                var sel = document.getElementById('iogs');
+                if (sel) {
+                    for (var i = 0; i < sel.options.length; i++) {
+                        sel.options[i].selected = true;
+                    }
+                }
+            })();
 
-            // ── IOGS: check all group checkboxes + select all options ──
-            checkAllBoxes('iogs_checkbox_container');
-            selectAll('iogs');
+            // ── Warehouses: call the page's "select all" handler ──
+            (function() {
+                var allCb = document.querySelector(
+                    '#fcs_checkbox_container input[type="checkbox"]'
+                );
+                if (allCb) {
+                    allCb.checked = true;
+                    if (typeof Components !== 'undefined' &&
+                        Components.Selector &&
+                        Components.Selector.defaultSelectAllOrNone) {
+                        Components.Selector.defaultSelectAllOrNone(
+                            'fcs', allCb, 'fcs_checkbox_container'
+                        );
+                    }
+                }
+                var sel = document.getElementById('fcs');
+                if (sel) {
+                    for (var i = 0; i < sel.options.length; i++) {
+                        sel.options[i].selected = true;
+                    }
+                }
+            })();
 
-            // ── Warehouses: check all group checkboxes + select all options ──
-            checkAllBoxes('fcs_checkbox_container');
-            selectAll('fcs');
-
-            // ── Removal Reasons: check all group checkboxes + select all options ──
-            checkAllBoxes('reasons_checkbox_container');
-            selectAll('reasons');
+            // ── Removal Reasons: call the page's "select all" handler ──
+            (function() {
+                var allCb = document.querySelector(
+                    '#reasons_checkbox_container input[type="checkbox"]'
+                );
+                if (allCb) {
+                    allCb.checked = true;
+                    if (typeof Components !== 'undefined' &&
+                        Components.Selector &&
+                        Components.Selector.defaultSelectAllOrNone) {
+                        Components.Selector.defaultSelectAllOrNone(
+                            'reasons', allCb, 'reasons_checkbox_container'
+                        );
+                    }
+                }
+                var sel = document.getElementById('reasons');
+                if (sel) {
+                    for (var i = 0; i < sel.options.length; i++) {
+                        sel.options[i].selected = true;
+                    }
+                }
+            })();
 
             // ── Check Inventory radio ──
             var checkInv = document.getElementById('check-inventory');
@@ -451,8 +496,8 @@ ctk.set_default_color_theme("dark-blue")
 
 app = ctk.CTk()
 app.title("Removal Bot")
-app.geometry("820x640")
-app.minsize(760, 560)
+app.geometry("820x760")
+app.minsize(760, 660)
 app.configure(fg_color=COLORS["bg"])
 
 # ── Header ──
@@ -558,26 +603,56 @@ clear_btn = ctk.CTkButton(
 )
 clear_btn.pack(side="left", padx=(8, 0))
 
-# ── Status Bar ──
-status_frame = ctk.CTkFrame(app, fg_color=COLORS["card"], corner_radius=8, height=36, border_width=1, border_color=COLORS["card_border"])
-status_frame.pack(fill="x", padx=24, pady=(12, 16))
-status_frame.pack_propagate(False)
+# ── Log Panel ──
+log_card = ctk.CTkFrame(app, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["card_border"])
+log_card.pack(fill="x", padx=24, pady=(12, 16))
 
-status_dot = ctk.CTkLabel(status_frame, text="\u25cf", text_color=COLORS["green"], font=ctk.CTkFont(size=10), width=20)
-status_dot.pack(side="left", padx=(12, 0))
+log_header = ctk.CTkFrame(log_card, fg_color="transparent")
+log_header.pack(fill="x", padx=16, pady=(10, 0))
 
-status_label = ctk.CTkLabel(
-    status_frame, text="Ready - Click Start Automation to begin",
-    font=ctk.CTkFont(size=11),
+ctk.CTkLabel(
+    log_header, text="Log",
+    font=ctk.CTkFont(size=11, weight="bold"),
     text_color=COLORS["text_dim"],
-    anchor="w",
+).pack(side="left")
+
+copy_log_btn = ctk.CTkButton(
+    log_header, text="Copy Log",
+    font=ctk.CTkFont(size=10),
+    fg_color=COLORS["card_border"], hover_color=COLORS["accent"],
+    height=24, corner_radius=6, width=70,
 )
-status_label.pack(side="left", padx=(4, 12), fill="x", expand=True)
+copy_log_btn.pack(side="right")
+
+log_box = ctk.CTkTextbox(
+    log_card, font=ctk.CTkFont(family="Consolas", size=10),
+    fg_color=COLORS["input_bg"], text_color=COLORS["text_dim"],
+    border_width=1, border_color=COLORS["card_border"],
+    corner_radius=8, height=120, wrap="word",
+)
+log_box.pack(fill="x", padx=16, pady=(6, 12))
+log_box.configure(state="disabled")
+
+
+def copy_log():
+    content = log_box.get("1.0", "end-1c")
+    app.clipboard_clear()
+    app.clipboard_append(content)
+
+
+copy_log_btn.configure(command=copy_log)
 
 
 # ── Event Handlers ──
 def update_status(msg):
-    app.after(0, lambda: status_label.configure(text=msg))
+    """Append a timestamped log entry and update the last-line display."""
+    def _do():
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        log_box.configure(state="normal")
+        log_box.insert("end", f"[{ts}] {msg}\n")
+        log_box.see("end")
+        log_box.configure(state="disabled")
+    app.after(0, _do)
 
 
 def on_start():
@@ -601,12 +676,10 @@ def on_start():
 
     pipeline.reset()
     start_btn.configure(state="disabled")
-    status_dot.configure(text_color=COLORS["accent"])
 
     def task():
         run_automation(asins, pipeline, update_status)
         app.after(0, lambda: start_btn.configure(state="normal"))
-        app.after(0, lambda: status_dot.configure(text_color=COLORS["green"]))
 
     threading.Thread(target=task, daemon=True).start()
 
@@ -620,7 +693,6 @@ def on_disconnect():
             pass
         driver = None
     pipeline.reset()
-    status_dot.configure(text_color=COLORS["text_muted"])
     update_status("Disconnected from Firefox.")
 
 
@@ -631,7 +703,6 @@ def on_clear():
     count_label.configure(text="")
     pipeline.reset()
     update_status("Ready - Click Start Automation to begin")
-    status_dot.configure(text_color=COLORS["green"])
 
 
 start_btn.configure(command=on_start)
