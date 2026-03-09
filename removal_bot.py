@@ -4,6 +4,7 @@ Removal Bot - Modern desktop app with agent pipeline visualization.
 Attaches to existing Firefox via Marionette and automates Removals Central.
 """
 
+import re
 import threading
 import time
 import tkinter as tk
@@ -59,8 +60,9 @@ COLORS = {
 PIPELINE_STEPS = [
     {"id": "connect",  "label": "Connect",    "icon": "\u26a1", "desc": "Attach to Firefox"},
     {"id": "navigate", "label": "Navigate",   "icon": "\u2192", "desc": "Open Removals Central"},
-    {"id": "fill",     "label": "Fill Data",  "icon": "\u270e", "desc": "Enter PO values"},
-    {"id": "verify",   "label": "Verify",     "icon": "\u2713", "desc": "Confirm submission"},
+    {"id": "fill",     "label": "Fill FNSKU",  "icon": "\u270e", "desc": "Enter ASIN values"},
+    {"id": "options",  "label": "Options",     "icon": "\u2699", "desc": "Set IOGS & Reasons"},
+    {"id": "search",   "label": "Search",     "icon": "\u2713", "desc": "Submit the form"},
 ]
 
 # Global
@@ -96,20 +98,21 @@ class PipelineCanvas(tk.Canvas):
             return
 
         n = len(self.steps)
-        node_w = 120
+        node_w = 110
         node_h = 64
-        total_w = n * node_w + (n - 1) * 40
+        gap = 32
+        total_w = n * node_w + (n - 1) * gap
         start_x = (w - total_w) / 2
 
         for i, step in enumerate(self.steps):
-            x = start_x + i * (node_w + 40)
+            x = start_x + i * (node_w + gap)
             y = (h - node_h) / 2
             state = self.states[step["id"]]
 
             # Draw connector line to next node
             if i < n - 1:
                 cx_start = x + node_w
-                cx_end = x + node_w + 40
+                cx_end = x + node_w + gap
                 cy = h / 2
                 # Determine if connector is active
                 prev_done = all(
@@ -239,54 +242,107 @@ def get_driver(pipeline, status_callback):
     raise ConnectionError(f"Cannot attach to Firefox: {last_err}")
 
 
-def run_automation(values, raw, pipeline, status_callback):
-    """Navigate to the page and fill in the values."""
+def parse_asins(raw_text):
+    """Parse pasted text and extract first column (ASIN/FNSKU values).
+
+    Handles formats like:
+        B00DU18AXK US ALL ALL ALL
+        B07FVCTXPW US ALL ALL ALL
+    Also handles header lines like 'Channel: All' or 'ASIN Detail: ...'
+    and comma-separated input.
+    """
+    asins = []
+    for line in raw_text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Skip header/label lines
+        if ":" in line and not re.match(r'^[A-Z0-9]{5,}', line):
+            continue
+        # Extract first whitespace-separated token
+        token = line.split()[0]
+        # Validate it looks like an ASIN/FNSKU (alphanumeric, 5+ chars)
+        if re.match(r'^[A-Z0-9]{5,}$', token):
+            asins.append(token)
+    # If no lines parsed, try comma-separated fallback
+    if not asins:
+        for token in raw_text.replace(",", " ").split():
+            token = token.strip()
+            if re.match(r'^[A-Z0-9]{5,}$', token):
+                asins.append(token)
+    return asins
+
+
+def run_automation(asins, pipeline, status_callback):
+    """Navigate to the page, fill FNSKUs, set options, and search."""
     global driver
     try:
         drv = get_driver(pipeline, status_callback)
 
-        # Navigate
+        # ── Navigate ──
         pipeline.set_state("navigate", STATE_RUNNING)
         status_callback("Navigating to Removals Central...")
         drv.get(URL)
         pipeline.set_state("navigate", STATE_DONE)
 
-        # Fill
-        pipeline.set_state("fill", STATE_RUNNING)
-        status_callback("Waiting for page to load...")
         wait = WebDriverWait(drv, 30)
 
-        selectors = [
-            (By.TAG_NAME, "textarea"),
-            (By.CSS_SELECTOR, "input[type='text']"),
-            (By.CSS_SELECTOR, "input:not([type='hidden'])"),
-        ]
+        # ── Fill FNSKU(s) ──
+        pipeline.set_state("fill", STATE_RUNNING)
+        status_callback("Filling FNSKU(s) field...")
 
-        filled = False
-        for by, selector in selectors:
-            try:
-                el = wait.until(EC.presence_of_element_located((by, selector)))
-                el.clear()
-                el.send_keys(raw)
-                filled = True
-                break
-            except Exception:
-                continue
+        fnskus_input = wait.until(
+            EC.presence_of_element_located((By.ID, "fnskus"))
+        )
+        fnskus_input.clear()
+        # Join ASINs with a space as required by the form
+        fnskus_input.send_keys(" ".join(asins))
+        pipeline.set_state("fill", STATE_DONE)
+        status_callback(f"Filled {len(asins)} ASIN(s) into FNSKU(s) field.")
 
-        if filled:
-            pipeline.set_state("fill", STATE_DONE)
-            status_callback(f"Filled {len(values)} value(s) into the page.")
-        else:
-            pipeline.set_state("fill", STATE_ERROR)
-            status_callback("Could not find input field. Page is open - fill manually.")
-            return
+        # ── Set Options (IOGS All, Removal Reasons All) ──
+        pipeline.set_state("options", STATE_RUNNING)
+        status_callback("Setting IOGS to All...")
 
-        # Verify
-        pipeline.set_state("verify", STATE_RUNNING)
-        status_callback("Verifying...")
-        time.sleep(1)
-        pipeline.set_state("verify", STATE_DONE)
-        status_callback(f"Done! {len(values)} PO value(s) submitted successfully.")
+        # Click the IOGS "All" checkbox
+        # The All checkbox is inside #iogs_checkbox_container, first input with value="[]"
+        iogs_all_cb = drv.find_element(
+            By.CSS_SELECTOR,
+            '#iogs_checkbox_container input[type="checkbox"][value="[]"]'
+        )
+        if not iogs_all_cb.is_selected():
+            iogs_all_cb.click()
+            time.sleep(0.5)
+
+        status_callback("Ensuring all Removal Reasons are selected...")
+
+        # Click the Removal Reasons "All" checkbox
+        reasons_all_cb = drv.find_element(
+            By.CSS_SELECTOR,
+            '#reasons_checkbox_container input[type="checkbox"]'
+        )
+        if not reasons_all_cb.is_selected():
+            reasons_all_cb.click()
+            time.sleep(0.5)
+
+        # Ensure "Check Inventory" radio is selected
+        check_inv_radio = drv.find_element(By.ID, "check-inventory")
+        if not check_inv_radio.is_selected():
+            check_inv_radio.click()
+            time.sleep(0.3)
+
+        pipeline.set_state("options", STATE_DONE)
+        status_callback("All options set.")
+
+        # ── Click Search ──
+        pipeline.set_state("search", STATE_RUNNING)
+        status_callback("Clicking Search...")
+
+        search_btn = drv.find_element(By.ID, "search-button")
+        search_btn.click()
+
+        pipeline.set_state("search", STATE_DONE)
+        status_callback(f"Done! Searched {len(asins)} ASIN(s) with all options selected.")
 
     except ConnectionError:
         pass  # Already handled in get_driver
@@ -306,8 +362,8 @@ ctk.set_default_color_theme("dark-blue")
 
 app = ctk.CTk()
 app.title("Removal Bot")
-app.geometry("780x620")
-app.minsize(700, 550)
+app.geometry("820x640")
+app.minsize(760, 560)
 app.configure(fg_color=COLORS["bg"])
 
 # ── Header ──
@@ -322,7 +378,7 @@ title_label = ctk.CTkLabel(
 title_label.pack(side="left")
 
 version_label = ctk.CTkLabel(
-    header_frame, text="v2.0",
+    header_frame, text="v3.0",
     font=ctk.CTkFont(size=12),
     text_color=COLORS["text_muted"],
 )
@@ -350,7 +406,7 @@ input_header = ctk.CTkFrame(input_card, fg_color="transparent")
 input_header.pack(fill="x", padx=16, pady=(12, 0))
 
 ctk.CTkLabel(
-    input_header, text="PO Values",
+    input_header, text="ASIN / FNSKU Input",
     font=ctk.CTkFont(size=13, weight="bold"),
     text_color=COLORS["text"],
 ).pack(side="left")
@@ -371,13 +427,13 @@ text_input = ctk.CTkTextbox(
 text_input.pack(fill="both", expand=True, padx=16, pady=(8, 16))
 
 # Placeholder text
-text_input.insert("1.0", "Paste comma-separated PO values here...")
+text_input.insert("1.0", "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)...")
 text_input.configure(text_color=COLORS["text_muted"])
 
 
 def on_input_click(event):
     current = text_input.get("1.0", "end-1c")
-    if current == "Paste comma-separated PO values here...":
+    if current == "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)...":
         text_input.delete("1.0", tk.END)
         text_input.configure(text_color=COLORS["text"])
 
@@ -436,24 +492,30 @@ def update_status(msg):
 
 
 def on_start():
+    placeholder = "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)..."
     raw = text_input.get("1.0", "end-1c").strip()
-    if raw == "Paste comma-separated PO values here..." or not raw:
-        messagebox.showwarning("Input Required", "Please enter comma-separated PO values.")
+    if raw == placeholder or not raw:
+        messagebox.showwarning("Input Required", "Please paste ASIN data (one per line).")
         return
 
-    values = [v.strip() for v in raw.split(",") if v.strip()]
-    if not values:
-        messagebox.showwarning("Input Required", "No valid values found.")
+    asins = parse_asins(raw)
+    if not asins:
+        messagebox.showwarning("Input Required", "No valid ASINs/FNSKUs found in the input.")
         return
 
-    count_label.configure(text=f"{len(values)} value(s)")
+    count_label.configure(text=f"{len(asins)} ASIN(s) parsed")
+    # Show parsed ASINs preview in status
+    preview = " ".join(asins[:5])
+    if len(asins) > 5:
+        preview += f" ... (+{len(asins) - 5} more)"
+    update_status(f"Parsed: {preview}")
+
     pipeline.reset()
     start_btn.configure(state="disabled")
     status_dot.configure(text_color=COLORS["accent"])
-    update_status(f"Starting automation with {len(values)} value(s)...")
 
     def task():
-        run_automation(values, raw, pipeline, update_status)
+        run_automation(asins, pipeline, update_status)
         app.after(0, lambda: start_btn.configure(state="normal"))
         app.after(0, lambda: status_dot.configure(text_color=COLORS["green"]))
 
@@ -475,7 +537,7 @@ def on_disconnect():
 
 def on_clear():
     text_input.delete("1.0", tk.END)
-    text_input.insert("1.0", "Paste comma-separated PO values here...")
+    text_input.insert("1.0", "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)...")
     text_input.configure(text_color=COLORS["text_muted"])
     count_label.configure(text="")
     pipeline.reset()
