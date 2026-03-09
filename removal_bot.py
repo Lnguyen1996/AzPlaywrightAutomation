@@ -378,23 +378,82 @@ def run_automation(asins, pipeline, status_callback):
         status_callback(f"Filled {len(asins)} ASIN(s): {asin_str}")
 
         # ── Set Options ──
-        # The form defaults are already correct for IOGS (none),
-        # Warehouses (US pre-selected), and Removal Reasons (all selected).
-        # We only need to ensure Check Inventory radio is selected.
         pipeline.set_state("options", STATE_RUNNING)
-        status_callback("Verifying form defaults (IOGS, Warehouses, Reasons)...")
+        status_callback("Setting form options...")
 
         drv.execute_script("""
-            // Ensure "Check Inventory" radio is selected
+            // ── IOGS: select ONLY "Amazon (1)" (value="1") ──
+            var iogsSelect = document.getElementById('iogs');
+            if (iogsSelect) {
+                // Deselect everything first
+                for (var i = 0; i < iogsSelect.options.length; i++) {
+                    iogsSelect.options[i].selected = false;
+                }
+                // Select only Amazon (1)
+                for (var i = 0; i < iogsSelect.options.length; i++) {
+                    if (iogsSelect.options[i].value === '1') {
+                        iogsSelect.options[i].selected = true;
+                        break;
+                    }
+                }
+            }
+            // Uncheck all IOGS checkboxes (none of the group checkboxes)
+            var iogsCbs = document.querySelectorAll(
+                '#iogs_checkbox_container input[type="checkbox"]'
+            );
+            iogsCbs.forEach(function(cb) { cb.checked = false; });
+
+            // ── Warehouses: check only US ──
+            // First uncheck all warehouse checkboxes
+            var fcsCbs = document.querySelectorAll(
+                '#fcs_checkbox_container input[type="checkbox"]'
+            );
+            fcsCbs.forEach(function(cb) { cb.checked = false; });
+            // Find and click the US checkbox to trigger its handler
+            fcsCbs.forEach(function(cb) {
+                var label = cb.parentElement;
+                if (label && label.textContent.trim() === 'US') {
+                    cb.checked = true;
+                    cb.click();  // triggers Components.Selector.defaultSelectGroup
+                }
+            });
+
+            // ── Removal Reasons: check All (Sellable + Unsellable) ──
+            var reasonsCbs = document.querySelectorAll(
+                '#reasons_checkbox_container input[type="checkbox"]'
+            );
+            // Find the All checkbox (first one) and ensure it's checked
+            if (reasonsCbs.length > 0) {
+                var allCb = reasonsCbs[0];
+                if (!allCb.checked) {
+                    allCb.checked = true;
+                    if (typeof Components !== 'undefined' &&
+                        Components.Selector &&
+                        Components.Selector.defaultSelectAllOrNone) {
+                        Components.Selector.defaultSelectAllOrNone(
+                            'reasons', allCb, 'reasons_checkbox_container'
+                        );
+                    }
+                }
+            }
+            // Also select all reason options directly
+            var reasonsSelect = document.getElementById('reasons');
+            if (reasonsSelect) {
+                for (var i = 0; i < reasonsSelect.options.length; i++) {
+                    reasonsSelect.options[i].selected = true;
+                }
+            }
+
+            // ── Check Inventory radio ──
             var checkInv = document.getElementById('check-inventory');
             if (checkInv && !checkInv.checked) {
                 checkInv.click();
             }
         """)
-        time.sleep(0.3)
+        time.sleep(0.5)
 
         pipeline.set_state("options", STATE_DONE)
-        status_callback("Options verified (defaults: IOGS none, Warehouses US, Reasons all).")
+        status_callback("Options set: IOGS=Amazon(1), Warehouses=US, Reasons=All, Check Inventory.")
 
         # ── Click Search ──
         pipeline.set_state("search", STATE_RUNNING)
