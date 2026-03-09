@@ -77,7 +77,7 @@ class PipelineCanvas(tk.Canvas):
     """n8n-style horizontal pipeline with real-time animated updates."""
 
     def __init__(self, master, steps, **kwargs):
-        super().__init__(master, bg=COLORS["bg"], highlightthickness=0, height=120, **kwargs)
+        super().__init__(master, bg="#111125", highlightthickness=0, height=120, **kwargs)
         self.steps = steps
         self.states = {s["id"]: STATE_IDLE for s in steps}
         self._pulse_frame = 0
@@ -489,148 +489,226 @@ def run_automation(asins, pipeline, status_callback):
 
 
 # ──────────────────────────────────────────────
-#  Modern GUI
+#  Polished GUI — layered cards, depth, glow
 # ──────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
+C = COLORS  # shorthand
+
 app = ctk.CTk()
 app.title("Removal Bot")
-app.geometry("820x760")
-app.minsize(760, 660)
-app.configure(fg_color=COLORS["bg"])
+app.geometry("860x780")
+app.minsize(800, 700)
+app.configure(fg_color="#080810")
 
-# ── Header ──
-header_frame = ctk.CTkFrame(app, fg_color=COLORS["bg"], corner_radius=0)
-header_frame.pack(fill="x", padx=24, pady=(20, 0))
+# ── Scrollable container so everything fits ──
+main_frame = ctk.CTkFrame(app, fg_color="#080810", corner_radius=0)
+main_frame.pack(fill="both", expand=True)
 
-title_label = ctk.CTkLabel(
-    header_frame, text="Removal Bot",
-    font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
-    text_color=COLORS["text"],
-)
-title_label.pack(side="left")
+# ── Header bar with accent stripe ──
+header_stripe = ctk.CTkFrame(main_frame, fg_color=C["accent"], height=3, corner_radius=0)
+header_stripe.pack(fill="x")
 
-version_label = ctk.CTkLabel(
-    header_frame, text="v3.0",
-    font=ctk.CTkFont(size=12),
-    text_color=COLORS["text_muted"],
-)
-version_label.pack(side="left", padx=(10, 0), pady=(8, 0))
+header_frame = ctk.CTkFrame(main_frame, fg_color="#0d0d1a", corner_radius=0, height=60)
+header_frame.pack(fill="x")
+header_frame.pack_propagate(False)
 
-# ── Pipeline ──
-pipeline_frame = ctk.CTkFrame(app, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["card_border"])
-pipeline_frame.pack(fill="x", padx=24, pady=(16, 0))
-
-pipeline_title = ctk.CTkLabel(
-    pipeline_frame, text="Agent Pipeline",
-    font=ctk.CTkFont(size=11, weight="bold"),
-    text_color=COLORS["text_dim"],
-)
-pipeline_title.pack(anchor="w", padx=16, pady=(12, 0))
-
-pipeline = PipelineCanvas(pipeline_frame, PIPELINE_STEPS)
-pipeline.pack(fill="x", padx=12, pady=(4, 12))
-
-# ── Input Card ──
-input_card = ctk.CTkFrame(app, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["card_border"])
-input_card.pack(fill="both", expand=True, padx=24, pady=(12, 0))
-
-input_header = ctk.CTkFrame(input_card, fg_color="transparent")
-input_header.pack(fill="x", padx=16, pady=(12, 0))
+header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
+header_inner.pack(fill="x", padx=28, pady=12)
 
 ctk.CTkLabel(
-    input_header, text="ASIN / FNSKU Input",
-    font=ctk.CTkFont(size=13, weight="bold"),
-    text_color=COLORS["text"],
+    header_inner, text="Removal Bot",
+    font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+    text_color="#ffffff",
+).pack(side="left")
+
+ctk.CTkLabel(
+    header_inner, text="v4.0",
+    font=ctk.CTkFont(size=11),
+    text_color=C["accent"],
+).pack(side="left", padx=(8, 0), pady=(4, 0))
+
+# Connection indicator
+conn_dot = ctk.CTkLabel(
+    header_inner, text="\u25cf  Not connected",
+    font=ctk.CTkFont(size=11),
+    text_color=C["text_muted"],
+)
+conn_dot.pack(side="right")
+
+# Subtle separator
+ctk.CTkFrame(main_frame, fg_color="#1a1a30", height=1, corner_radius=0).pack(fill="x")
+
+# ── Content area ──
+content = ctk.CTkFrame(main_frame, fg_color="#080810", corner_radius=0)
+content.pack(fill="both", expand=True, padx=24, pady=(16, 20))
+
+# ────────────────────────────────
+#  Pipeline Card — elevated style
+# ────────────────────────────────
+# Outer glow/shadow layer
+pipe_shadow = ctk.CTkFrame(content, fg_color="#0a0a18", corner_radius=16)
+pipe_shadow.pack(fill="x", pady=(0, 2))
+
+pipeline_frame = ctk.CTkFrame(
+    pipe_shadow, fg_color="#111125", corner_radius=14,
+    border_width=1, border_color="#252550",
+)
+pipeline_frame.pack(fill="x", padx=2, pady=2)
+
+# Pipeline header with accent dot
+pipe_header = ctk.CTkFrame(pipeline_frame, fg_color="transparent")
+pipe_header.pack(fill="x", padx=18, pady=(14, 0))
+
+ctk.CTkLabel(
+    pipe_header, text="\u25cf",
+    font=ctk.CTkFont(size=8), text_color=C["accent"],
+).pack(side="left", padx=(0, 6))
+
+ctk.CTkLabel(
+    pipe_header, text="AGENT PIPELINE",
+    font=ctk.CTkFont(size=10, weight="bold"),
+    text_color="#8888aa",
+).pack(side="left")
+
+pipeline = PipelineCanvas(pipeline_frame, PIPELINE_STEPS)
+pipeline.configure(bg="#111125")
+pipeline.pack(fill="x", padx=14, pady=(6, 14))
+
+# ────────────────────────────────
+#  Input Card — elevated style
+# ────────────────────────────────
+input_shadow = ctk.CTkFrame(content, fg_color="#0a0a18", corner_radius=16)
+input_shadow.pack(fill="both", expand=True, pady=(10, 2))
+
+input_card = ctk.CTkFrame(
+    input_shadow, fg_color="#111125", corner_radius=14,
+    border_width=1, border_color="#252550",
+)
+input_card.pack(fill="both", expand=True, padx=2, pady=2)
+
+input_header = ctk.CTkFrame(input_card, fg_color="transparent")
+input_header.pack(fill="x", padx=18, pady=(14, 0))
+
+ctk.CTkLabel(
+    input_header, text="\u25cf",
+    font=ctk.CTkFont(size=8), text_color="#3b82f6",
+).pack(side="left", padx=(0, 6))
+
+ctk.CTkLabel(
+    input_header, text="ASIN / FNSKU INPUT",
+    font=ctk.CTkFont(size=10, weight="bold"),
+    text_color="#8888aa",
 ).pack(side="left")
 
 count_label = ctk.CTkLabel(
     input_header, text="",
-    font=ctk.CTkFont(size=11),
-    text_color=COLORS["green"],
+    font=ctk.CTkFont(size=11, weight="bold"),
+    text_color=C["green"],
 )
 count_label.pack(side="right")
 
 text_input = ctk.CTkTextbox(
     input_card, font=ctk.CTkFont(family="Consolas", size=12),
-    fg_color=COLORS["input_bg"], text_color=COLORS["text"],
-    border_width=1, border_color=COLORS["card_border"],
-    corner_radius=8, wrap="word",
+    fg_color="#0c0c1e", text_color=C["text"],
+    border_width=1, border_color="#1e1e40",
+    corner_radius=10, wrap="word",
 )
-text_input.pack(fill="both", expand=True, padx=16, pady=(8, 16))
+text_input.pack(fill="both", expand=True, padx=18, pady=(10, 16))
 
-# Placeholder text
-text_input.insert("1.0", "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)...")
-text_input.configure(text_color=COLORS["text_muted"])
+PLACEHOLDER = "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)..."
+text_input.insert("1.0", PLACEHOLDER)
+text_input.configure(text_color=C["text_muted"])
 
 
 def on_input_click(event):
-    current = text_input.get("1.0", "end-1c")
-    if current == "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)...":
+    if text_input.get("1.0", "end-1c") == PLACEHOLDER:
         text_input.delete("1.0", tk.END)
-        text_input.configure(text_color=COLORS["text"])
+        text_input.configure(text_color=C["text"])
 
 
 text_input.bind("<FocusIn>", on_input_click)
 
-# ── Buttons ──
-btn_frame = ctk.CTkFrame(app, fg_color=COLORS["bg"])
-btn_frame.pack(fill="x", padx=24, pady=(12, 0))
+# ────────────────────────────────
+#  Action Buttons — gradient style
+# ────────────────────────────────
+btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+btn_frame.pack(fill="x", pady=(12, 0))
 
 start_btn = ctk.CTkButton(
-    btn_frame, text="  Start Automation",
+    btn_frame, text="\u25b6  Start Automation",
     font=ctk.CTkFont(size=13, weight="bold"),
-    fg_color=COLORS["green"], hover_color=COLORS["green_hover"],
-    height=42, corner_radius=8, width=200,
+    fg_color="#059669", hover_color="#047857",
+    text_color="#ffffff",
+    height=44, corner_radius=10, width=210,
+    border_width=1, border_color="#10b981",
 )
 start_btn.pack(side="left")
 
 disconnect_btn = ctk.CTkButton(
     btn_frame, text="Disconnect",
     font=ctk.CTkFont(size=12),
-    fg_color=COLORS["orange"], hover_color="#d97706",
-    height=42, corner_radius=8, width=120,
+    fg_color="#92400e", hover_color="#78350f",
+    text_color="#fbbf24",
+    height=44, corner_radius=10, width=120,
+    border_width=1, border_color="#b45309",
 )
-disconnect_btn.pack(side="left", padx=(8, 0))
+disconnect_btn.pack(side="left", padx=(10, 0))
 
 clear_btn = ctk.CTkButton(
     btn_frame, text="Clear",
     font=ctk.CTkFont(size=12),
-    fg_color=COLORS["card"], hover_color=COLORS["card_border"],
-    border_width=1, border_color=COLORS["card_border"],
-    height=42, corner_radius=8, width=80,
+    fg_color="#1e1e3a", hover_color="#2a2a50",
+    text_color="#8888aa",
+    height=44, corner_radius=10, width=80,
+    border_width=1, border_color="#2a2a4a",
 )
-clear_btn.pack(side="left", padx=(8, 0))
+clear_btn.pack(side="left", padx=(10, 0))
 
-# ── Log Panel ──
-log_card = ctk.CTkFrame(app, fg_color=COLORS["card"], corner_radius=12, border_width=1, border_color=COLORS["card_border"])
-log_card.pack(fill="x", padx=24, pady=(12, 16))
+# ────────────────────────────────
+#  Log Panel — elevated style
+# ────────────────────────────────
+log_shadow = ctk.CTkFrame(content, fg_color="#0a0a18", corner_radius=16)
+log_shadow.pack(fill="x", pady=(12, 0))
+
+log_card = ctk.CTkFrame(
+    log_shadow, fg_color="#111125", corner_radius=14,
+    border_width=1, border_color="#252550",
+)
+log_card.pack(fill="x", padx=2, pady=2)
 
 log_header = ctk.CTkFrame(log_card, fg_color="transparent")
-log_header.pack(fill="x", padx=16, pady=(10, 0))
+log_header.pack(fill="x", padx=18, pady=(12, 0))
 
 ctk.CTkLabel(
-    log_header, text="Log",
-    font=ctk.CTkFont(size=11, weight="bold"),
-    text_color=COLORS["text_dim"],
+    log_header, text="\u25cf",
+    font=ctk.CTkFont(size=8), text_color="#f59e0b",
+).pack(side="left", padx=(0, 6))
+
+ctk.CTkLabel(
+    log_header, text="ACTIVITY LOG",
+    font=ctk.CTkFont(size=10, weight="bold"),
+    text_color="#8888aa",
 ).pack(side="left")
 
 copy_log_btn = ctk.CTkButton(
-    log_header, text="Copy Log",
-    font=ctk.CTkFont(size=10),
-    fg_color=COLORS["card_border"], hover_color=COLORS["accent"],
-    height=24, corner_radius=6, width=70,
+    log_header, text="Copy",
+    font=ctk.CTkFont(size=9),
+    fg_color="#1e1e3a", hover_color=C["accent"],
+    text_color="#8888aa",
+    height=22, corner_radius=6, width=55,
+    border_width=1, border_color="#2a2a4a",
 )
 copy_log_btn.pack(side="right")
 
 log_box = ctk.CTkTextbox(
     log_card, font=ctk.CTkFont(family="Consolas", size=10),
-    fg_color=COLORS["input_bg"], text_color=COLORS["text_dim"],
-    border_width=1, border_color=COLORS["card_border"],
-    corner_radius=8, height=120, wrap="word",
+    fg_color="#0c0c1e", text_color="#6b7280",
+    border_width=1, border_color="#1e1e40",
+    corner_radius=10, height=110, wrap="word",
 )
-log_box.pack(fill="x", padx=16, pady=(6, 12))
+log_box.pack(fill="x", padx=18, pady=(8, 14))
 log_box.configure(state="disabled")
 
 
@@ -643,22 +721,30 @@ def copy_log():
 copy_log_btn.configure(command=copy_log)
 
 
-# ── Event Handlers ──
+# ──────────────────────────────────────────────
+#  Event Handlers
+# ──────────────────────────────────────────────
 def update_status(msg):
-    """Append a timestamped log entry and update the last-line display."""
+    """Append a timestamped log entry."""
     def _do():
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         log_box.configure(state="normal")
         log_box.insert("end", f"[{ts}] {msg}\n")
         log_box.see("end")
         log_box.configure(state="disabled")
+        # Also update connection indicator
+        if "Attached" in msg:
+            conn_dot.configure(text="\u25cf  Connected", text_color=C["green"])
+        elif "Disconnect" in msg:
+            conn_dot.configure(text="\u25cf  Not connected", text_color=C["text_muted"])
+        elif "Error" in msg:
+            conn_dot.configure(text="\u25cf  Error", text_color=C["red"])
     app.after(0, _do)
 
 
 def on_start():
-    placeholder = "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)..."
     raw = text_input.get("1.0", "end-1c").strip()
-    if raw == placeholder or not raw:
+    if raw == PLACEHOLDER or not raw:
         messagebox.showwarning("Input Required", "Please paste ASIN data (one per line).")
         return
 
@@ -667,19 +753,23 @@ def on_start():
         messagebox.showwarning("Input Required", "No valid ASINs/FNSKUs found in the input.")
         return
 
-    count_label.configure(text=f"{len(asins)} ASIN(s) parsed")
-    # Show parsed ASINs preview in status
+    count_label.configure(text=f"{len(asins)} ASIN(s)")
     preview = " ".join(asins[:5])
     if len(asins) > 5:
         preview += f" ... (+{len(asins) - 5} more)"
-    update_status(f"Parsed: {preview}")
+    update_status(f"Parsed {len(asins)} ASIN(s): {preview}")
+
+    # Clear previous log
+    log_box.configure(state="normal")
+    log_box.delete("1.0", "end")
+    log_box.configure(state="disabled")
 
     pipeline.reset()
-    start_btn.configure(state="disabled")
+    start_btn.configure(state="disabled", fg_color="#374151")
 
     def task():
         run_automation(asins, pipeline, update_status)
-        app.after(0, lambda: start_btn.configure(state="normal"))
+        app.after(0, lambda: start_btn.configure(state="normal", fg_color="#059669"))
 
     threading.Thread(target=task, daemon=True).start()
 
@@ -693,16 +783,19 @@ def on_disconnect():
             pass
         driver = None
     pipeline.reset()
+    conn_dot.configure(text="\u25cf  Not connected", text_color=C["text_muted"])
     update_status("Disconnected from Firefox.")
 
 
 def on_clear():
     text_input.delete("1.0", tk.END)
-    text_input.insert("1.0", "Paste ASIN data here (e.g. B00DU18AXK US ALL ALL ALL)...")
-    text_input.configure(text_color=COLORS["text_muted"])
+    text_input.insert("1.0", PLACEHOLDER)
+    text_input.configure(text_color=C["text_muted"])
     count_label.configure(text="")
     pipeline.reset()
-    update_status("Ready - Click Start Automation to begin")
+    log_box.configure(state="normal")
+    log_box.delete("1.0", "end")
+    log_box.configure(state="disabled")
 
 
 start_btn.configure(command=on_start)
