@@ -31,7 +31,7 @@ driver = None
 
 
 def get_driver(status_callback):
-    """Connect to existing Firefox or launch a new one with the user's profile."""
+    """Connect to existing Firefox running with Marionette on port 2828."""
     global driver
 
     # If we already have an active session, reuse it
@@ -42,30 +42,34 @@ def get_driver(status_callback):
         except Exception:
             driver = None
 
-    status_callback("Connecting to Firefox...")
+    status_callback("Connecting to Firefox on port 2828...")
 
     options = Options()
+    service = Service(
+        executable_path=GeckoDriverManager().install(),
+        service_args=["--connect-existing", "--marionette-port", "2828"],
+    )
 
-    # Try to attach to existing Firefox running with Marionette on port 2828
-    try:
-        options.add_argument("--marionette")
-        service = Service(
-            executable_path=GeckoDriverManager().install(),
-            service_args=["--connect-existing", "--marionette-port", "2828"],
-        )
-        driver = webdriver.Firefox(service=service, options=options)
-        status_callback("Attached to existing Firefox!")
-        return driver
-    except Exception:
-        status_callback("Could not attach. Launching new Firefox with your profile...")
+    # Retry a few times in case Firefox is still starting up
+    last_err = None
+    for attempt in range(5):
+        try:
+            driver = webdriver.Firefox(service=service, options=options)
+            status_callback("Attached to your Firefox session!")
+            return driver
+        except Exception as e:
+            last_err = e
+            status_callback(f"Waiting for Firefox... (attempt {attempt + 1}/5)")
+            import time
+            time.sleep(2)
 
-    # Fallback: launch new Firefox using the user's default profile
-    options = Options()
-    # Use the default system Firefox instead of Playwright's
-    service = Service(executable_path=GeckoDriverManager().install())
-    driver = webdriver.Firefox(service=service, options=options)
-    status_callback("New Firefox window opened.")
-    return driver
+    status_callback(
+        f"Could not connect to Firefox. "
+        f"Make sure you ran RemovalBot.bat (or start Firefox with: "
+        f"firefox --marionette --start-debugger-server 2828)\n"
+        f"Error: {last_err}"
+    )
+    raise ConnectionError(f"Cannot attach to Firefox: {last_err}")
 
 
 def run_automation(values, raw, status_callback):
@@ -216,7 +220,7 @@ tk.Button(
 ).pack(side="left", padx=5)
 
 # Status bar
-status_label = ttk.Label(root, text="Ready. Start Firefox with: firefox --marionette --start-debugger-server 2828", style="Status.TLabel")
+status_label = ttk.Label(root, text="Ready. Click Start Automation to begin.", style="Status.TLabel")
 status_label.pack(pady=(0, 10), padx=15, anchor="w")
 
 root.mainloop()
