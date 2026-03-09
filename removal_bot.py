@@ -396,25 +396,29 @@ def run_automation(asins, pipeline, status_callback):
                         break;
                     }
                 }
+                iogsSelect.dispatchEvent(new Event('change', {bubbles: true}));
             }
-            // Uncheck all IOGS checkboxes (none of the group checkboxes)
+            // Sync IOGS checkboxes: uncheck any that are checked
             var iogsCbs = document.querySelectorAll(
                 '#iogs_checkbox_container input[type="checkbox"]'
             );
-            iogsCbs.forEach(function(cb) { cb.checked = false; });
+            iogsCbs.forEach(function(cb) {
+                if (cb.checked) cb.click();  // uncheck by toggling
+            });
 
             // ── Warehouses: check only US ──
-            // First uncheck all warehouse checkboxes
+            // First uncheck any checked warehouse checkboxes by clicking them
             var fcsCbs = document.querySelectorAll(
                 '#fcs_checkbox_container input[type="checkbox"]'
             );
-            fcsCbs.forEach(function(cb) { cb.checked = false; });
-            // Find and click the US checkbox to trigger its handler
+            fcsCbs.forEach(function(cb) {
+                if (cb.checked) cb.click();  // uncheck via toggle
+            });
+            // Now click the US checkbox to check it (toggles unchecked -> checked)
             fcsCbs.forEach(function(cb) {
                 var label = cb.parentElement;
                 if (label && label.textContent.trim() === 'US') {
-                    cb.checked = true;
-                    cb.click();  // triggers Components.Selector.defaultSelectGroup
+                    cb.click();  // toggles from unchecked to checked + fires handler
                 }
             });
 
@@ -422,21 +426,14 @@ def run_automation(asins, pipeline, status_callback):
             var reasonsCbs = document.querySelectorAll(
                 '#reasons_checkbox_container input[type="checkbox"]'
             );
-            // Find the All checkbox (first one) and ensure it's checked
+            // Click the "All" checkbox (first one) if it's not already checked
             if (reasonsCbs.length > 0) {
                 var allCb = reasonsCbs[0];
                 if (!allCb.checked) {
-                    allCb.checked = true;
-                    if (typeof Components !== 'undefined' &&
-                        Components.Selector &&
-                        Components.Selector.defaultSelectAllOrNone) {
-                        Components.Selector.defaultSelectAllOrNone(
-                            'reasons', allCb, 'reasons_checkbox_container'
-                        );
-                    }
+                    allCb.click();  // toggles to checked + fires selectAllOrNone handler
                 }
             }
-            // Also select all reason options directly
+            // Also ensure all reason <option>s are selected in the <select>
             var reasonsSelect = document.getElementById('reasons');
             if (reasonsSelect) {
                 for (var i = 0; i < reasonsSelect.options.length; i++) {
