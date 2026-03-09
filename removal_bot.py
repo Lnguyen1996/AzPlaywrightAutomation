@@ -363,9 +363,11 @@ def run_automation(asins, pipeline, status_callback):
         fnskus_input = wait.until(
             EC.presence_of_element_located((By.ID, "fnskus"))
         )
-        fnskus_input.clear()
-        # Join ASINs with a space as required by the form
-        fnskus_input.send_keys(" ".join(asins))
+        # Set value via JS to avoid any send_keys encoding issues
+        asin_str = " ".join(asins)
+        drv.execute_script(
+            "arguments[0].value = arguments[1];", fnskus_input, asin_str
+        )
         pipeline.set_state("fill", STATE_DONE)
         status_callback(f"Filled {len(asins)} ASIN(s) into FNSKU(s) field.")
 
@@ -373,47 +375,46 @@ def run_automation(asins, pipeline, status_callback):
         pipeline.set_state("options", STATE_RUNNING)
         status_callback("Setting IOGS to All...")
 
-        # The checkboxes are inside collapsed containers and not directly
-        # interactable.  Use JavaScript to click them and call the page's
-        # own Components.Selector helpers so all <select> options get
-        # selected properly.
+        # The checkboxes are inside collapsed/hidden containers.  We must
+        # call the page's own Components.Selector helpers directly so that
+        # both the checkboxes AND the underlying <select> options get set.
         drv.execute_script("""
-            // ── IOGS: check the "All" checkbox and select every <option> ──
-            var iogsAllCb = document.querySelector(
-                '#iogs_checkbox_container input[type="checkbox"][value="[]"]'
-            );
-            if (iogsAllCb && !iogsAllCb.checked) {
-                iogsAllCb.checked = true;
-                // Fire the onclick handler the page wired up
-                iogsAllCb.click();
-            }
-            // Also directly select every option in the <select> as a fallback
-            var iogsSelect = document.getElementById('iogs');
-            if (iogsSelect) {
-                for (var i = 0; i < iogsSelect.options.length; i++) {
-                    iogsSelect.options[i].selected = true;
+            // Helper: select ALL options in a <select multiple>
+            function selectAll(selectId) {
+                var sel = document.getElementById(selectId);
+                if (!sel) return;
+                for (var i = 0; i < sel.options.length; i++) {
+                    sel.options[i].selected = true;
                 }
             }
 
-            // ── Removal Reasons: check "All" and select every <option> ──
-            var reasonsAllCb = document.querySelector(
-                '#reasons_checkbox_container input[type="checkbox"]'
-            );
-            if (reasonsAllCb && !reasonsAllCb.checked) {
-                reasonsAllCb.checked = true;
-                reasonsAllCb.click();
+            // Helper: check all checkboxes in a container
+            function checkAllBoxes(containerId) {
+                var cbs = document.querySelectorAll(
+                    '#' + containerId + ' input[type="checkbox"]'
+                );
+                cbs.forEach(function(cb) { cb.checked = true; });
             }
-            var reasonsSelect = document.getElementById('reasons');
-            if (reasonsSelect) {
-                for (var i = 0; i < reasonsSelect.options.length; i++) {
-                    reasonsSelect.options[i].selected = true;
-                }
-            }
+
+            // ── IOGS: check all group checkboxes + select all options ──
+            checkAllBoxes('iogs_checkbox_container');
+            selectAll('iogs');
+
+            // ── Warehouses: check all group checkboxes + select all options ──
+            checkAllBoxes('fcs_checkbox_container');
+            selectAll('fcs');
+
+            // ── Removal Reasons: check all group checkboxes + select all options ──
+            checkAllBoxes('reasons_checkbox_container');
+            selectAll('reasons');
 
             // ── Check Inventory radio ──
             var checkInv = document.getElementById('check-inventory');
-            if (checkInv && !checkInv.checked) {
-                checkInv.click();
+            if (checkInv) {
+                checkInv.checked = true;
+                if (typeof change_checked_info === 'function') {
+                    change_checked_info(checkInv);
+                }
             }
         """)
         time.sleep(0.5)
