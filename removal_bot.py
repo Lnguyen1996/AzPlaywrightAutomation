@@ -373,42 +373,61 @@ def run_automation(asins, pipeline, status_callback):
         pipeline.set_state("options", STATE_RUNNING)
         status_callback("Setting IOGS to All...")
 
-        # Click the IOGS "All" checkbox
-        # The All checkbox is inside #iogs_checkbox_container, first input with value="[]"
-        iogs_all_cb = drv.find_element(
-            By.CSS_SELECTOR,
-            '#iogs_checkbox_container input[type="checkbox"][value="[]"]'
-        )
-        if not iogs_all_cb.is_selected():
-            iogs_all_cb.click()
-            time.sleep(0.5)
+        # The checkboxes are inside collapsed containers and not directly
+        # interactable.  Use JavaScript to click them and call the page's
+        # own Components.Selector helpers so all <select> options get
+        # selected properly.
+        drv.execute_script("""
+            // ── IOGS: check the "All" checkbox and select every <option> ──
+            var iogsAllCb = document.querySelector(
+                '#iogs_checkbox_container input[type="checkbox"][value="[]"]'
+            );
+            if (iogsAllCb && !iogsAllCb.checked) {
+                iogsAllCb.checked = true;
+                // Fire the onclick handler the page wired up
+                iogsAllCb.click();
+            }
+            // Also directly select every option in the <select> as a fallback
+            var iogsSelect = document.getElementById('iogs');
+            if (iogsSelect) {
+                for (var i = 0; i < iogsSelect.options.length; i++) {
+                    iogsSelect.options[i].selected = true;
+                }
+            }
 
-        status_callback("Ensuring all Removal Reasons are selected...")
+            // ── Removal Reasons: check "All" and select every <option> ──
+            var reasonsAllCb = document.querySelector(
+                '#reasons_checkbox_container input[type="checkbox"]'
+            );
+            if (reasonsAllCb && !reasonsAllCb.checked) {
+                reasonsAllCb.checked = true;
+                reasonsAllCb.click();
+            }
+            var reasonsSelect = document.getElementById('reasons');
+            if (reasonsSelect) {
+                for (var i = 0; i < reasonsSelect.options.length; i++) {
+                    reasonsSelect.options[i].selected = true;
+                }
+            }
 
-        # Click the Removal Reasons "All" checkbox
-        reasons_all_cb = drv.find_element(
-            By.CSS_SELECTOR,
-            '#reasons_checkbox_container input[type="checkbox"]'
-        )
-        if not reasons_all_cb.is_selected():
-            reasons_all_cb.click()
-            time.sleep(0.5)
-
-        # Ensure "Check Inventory" radio is selected
-        check_inv_radio = drv.find_element(By.ID, "check-inventory")
-        if not check_inv_radio.is_selected():
-            check_inv_radio.click()
-            time.sleep(0.3)
+            // ── Check Inventory radio ──
+            var checkInv = document.getElementById('check-inventory');
+            if (checkInv && !checkInv.checked) {
+                checkInv.click();
+            }
+        """)
+        time.sleep(0.5)
 
         pipeline.set_state("options", STATE_DONE)
-        status_callback("All options set.")
+        status_callback("All options set (IOGS All, Reasons All, Check Inventory).")
 
         # ── Click Search ──
         pipeline.set_state("search", STATE_RUNNING)
         status_callback("Clicking Search...")
 
-        search_btn = drv.find_element(By.ID, "search-button")
-        search_btn.click()
+        drv.execute_script("""
+            document.getElementById('search-button').click();
+        """)
 
         pipeline.set_state("search", STATE_DONE)
         status_callback(f"Done! Searched {len(asins)} ASIN(s) with all options selected.")
