@@ -482,90 +482,145 @@ def run_automation(asins, pipeline, status_callback):
         fnskus_input = wait.until(
             EC.presence_of_element_located((By.ID, "fnskus"))
         )
-        # Set the FNSKU value via JavaScript to guarantee space separation.
-        # send_keys() can produce commas on some pages; setting .value is safe.
+        # Fill FNSKU using focus + execCommand to avoid comma conversion.
+        # The page may intercept .value= and reformat; execCommand simulates typing.
         asin_str = " ".join(asins)
         drv.execute_script(
             "var el = document.getElementById('fnskus');"
-            "el.value = arguments[0];"
-            "el.dispatchEvent(new Event('input', {bubbles:true}));"
-            "el.dispatchEvent(new Event('change', {bubbles:true}));",
+            "el.value = '';"
+            "el.focus();"
+            "document.execCommand('selectAll', false, null);"
+            "document.execCommand('insertText', false, arguments[0]);",
             asin_str,
         )
+        time.sleep(0.3)
         pipeline.set_state("fill", STATE_DONE)
         status_callback(f"Filled {len(asins)} ASIN(s): {asin_str}")
 
-        # ── Set Options ──
+        # ── Set Options (step by step with delays) ──
         pipeline.set_state("options", STATE_RUNNING)
-        status_callback("Setting form options...")
 
+        # Step 1: Expand IOGS section by clicking its toggle
+        status_callback("Expanding IOGS section...")
         drv.execute_script("""
-            // ── IOGS: select ONLY "Amazon (1)" (value="1") ──
+            var iogsToggle = document.querySelector(
+                '#iogs_checkbox_container'
+            );
+            // Make sure the checkbox container is visible
+            if (iogsToggle) iogsToggle.style.display = 'block';
+            // Also click the expand arrow if it exists
+            var arrows = document.querySelectorAll('.toggle-selector, .expand-selector, [onclick*="iogs"]');
+            arrows.forEach(function(a) { a.click(); });
+        """)
+        time.sleep(0.5)
+
+        # Step 2: Set IOGS to Amazon (1)
+        status_callback("Setting IOGS to Amazon (1)...")
+        drv.execute_script("""
             var iogsSelect = document.getElementById('iogs');
             if (iogsSelect) {
-                // Deselect everything first
                 for (var i = 0; i < iogsSelect.options.length; i++) {
-                    iogsSelect.options[i].selected = false;
-                }
-                // Select only Amazon (1)
-                for (var i = 0; i < iogsSelect.options.length; i++) {
-                    if (iogsSelect.options[i].value === '1') {
-                        iogsSelect.options[i].selected = true;
-                        break;
-                    }
+                    iogsSelect.options[i].selected = (iogsSelect.options[i].value === '1');
                 }
                 iogsSelect.dispatchEvent(new Event('change', {bubbles: true}));
             }
-            // Sync IOGS checkboxes: uncheck any that are checked
+            // Sync checkboxes
             var iogsCbs = document.querySelectorAll(
                 '#iogs_checkbox_container input[type="checkbox"]'
             );
             iogsCbs.forEach(function(cb) {
-                if (cb.checked) cb.click();  // uncheck by toggling
+                if (cb.checked) cb.click();
             });
+        """)
+        time.sleep(0.5)
 
-            // ── Warehouses: check only US ──
-            // First uncheck any checked warehouse checkboxes by clicking them
+        # Step 3: Expand Warehouses section
+        status_callback("Expanding Warehouses section...")
+        drv.execute_script("""
+            var fcsContainer = document.getElementById('fcs_checkbox_container');
+            if (fcsContainer) fcsContainer.style.display = 'block';
+            var arrows = document.querySelectorAll('[onclick*="fcs"]');
+            arrows.forEach(function(a) { a.click(); });
+        """)
+        time.sleep(0.5)
+
+        # Step 4: Check only US warehouse
+        status_callback("Setting Warehouses to US...")
+        drv.execute_script("""
             var fcsCbs = document.querySelectorAll(
                 '#fcs_checkbox_container input[type="checkbox"]'
             );
+            // Uncheck any that are checked
             fcsCbs.forEach(function(cb) {
-                if (cb.checked) cb.click();  // uncheck via toggle
+                if (cb.checked) cb.click();
             });
-            // Now click the US checkbox to check it (toggles unchecked -> checked)
+        """)
+        time.sleep(0.3)
+        drv.execute_script("""
+            var fcsCbs = document.querySelectorAll(
+                '#fcs_checkbox_container input[type="checkbox"]'
+            );
+            // Now click US
             fcsCbs.forEach(function(cb) {
                 var label = cb.parentElement;
                 if (label && label.textContent.trim() === 'US') {
-                    cb.click();  // toggles from unchecked to checked + fires handler
+                    if (!cb.checked) cb.click();
                 }
             });
+        """)
+        time.sleep(0.5)
 
-            // ── Removal Reasons: check All (Sellable + Unsellable) ──
+        # Step 5: Expand Removal Reasons section
+        status_callback("Expanding Removal Reasons section...")
+        drv.execute_script("""
+            var reasonsContainer = document.getElementById('reasons_checkbox_container');
+            if (reasonsContainer) reasonsContainer.style.display = 'block';
+            var arrows = document.querySelectorAll('[onclick*="reasons"]');
+            arrows.forEach(function(a) { a.click(); });
+        """)
+        time.sleep(0.5)
+
+        # Step 6: Check All removal reasons
+        status_callback("Setting Removal Reasons to All...")
+        drv.execute_script("""
             var reasonsCbs = document.querySelectorAll(
                 '#reasons_checkbox_container input[type="checkbox"]'
             );
-            // Click the "All" checkbox (first one) if it's not already checked
             if (reasonsCbs.length > 0) {
                 var allCb = reasonsCbs[0];
                 if (!allCb.checked) {
-                    allCb.click();  // toggles to checked + fires selectAllOrNone handler
+                    allCb.click();
                 }
             }
-            // Also ensure all reason <option>s are selected in the <select>
+        """)
+        time.sleep(0.3)
+        # Also select all options in the <select> directly
+        drv.execute_script("""
             var reasonsSelect = document.getElementById('reasons');
             if (reasonsSelect) {
                 for (var i = 0; i < reasonsSelect.options.length; i++) {
                     reasonsSelect.options[i].selected = true;
                 }
             }
+            // Also check Sellable and Unsellable checkboxes individually
+            var reasonsCbs = document.querySelectorAll(
+                '#reasons_checkbox_container input[type="checkbox"]'
+            );
+            reasonsCbs.forEach(function(cb) {
+                if (!cb.checked) cb.click();
+            });
+        """)
+        time.sleep(0.5)
 
-            // ── Check Inventory radio ──
+        # Step 7: Select Check Inventory radio
+        status_callback("Setting Check Inventory...")
+        drv.execute_script("""
             var checkInv = document.getElementById('check-inventory');
             if (checkInv && !checkInv.checked) {
                 checkInv.click();
             }
         """)
-        time.sleep(0.5)
+        time.sleep(0.3)
 
         pipeline.set_state("options", STATE_DONE)
         status_callback("Options set: IOGS=Amazon(1), Warehouses=US, Reasons=All, Check Inventory.")
