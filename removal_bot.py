@@ -497,129 +497,158 @@ def run_automation(asins, pipeline, status_callback):
         pipeline.set_state("fill", STATE_DONE)
         status_callback(f"Filled {len(asins)} ASIN(s): {asin_str}")
 
-        # ── Set Options (step by step with delays) ──
+        # ── Set Options (using Selenium native clicks, step by step) ──
         pipeline.set_state("options", STATE_RUNNING)
 
-        # Step 1: Expand IOGS section by clicking its toggle
-        status_callback("Expanding IOGS section...")
-        drv.execute_script("""
-            var iogsToggle = document.querySelector(
-                '#iogs_checkbox_container'
-            );
-            // Make sure the checkbox container is visible
-            if (iogsToggle) iogsToggle.style.display = 'block';
-            // Also click the expand arrow if it exists
-            var arrows = document.querySelectorAll('.toggle-selector, .expand-selector, [onclick*="iogs"]');
-            arrows.forEach(function(a) { a.click(); });
-        """)
-        time.sleep(0.5)
-
-        # Step 2: Set IOGS to Amazon (1)
+        # Step 1: IOGS — select Amazon (1) in the <select> element
         status_callback("Setting IOGS to Amazon (1)...")
         drv.execute_script("""
-            var iogsSelect = document.getElementById('iogs');
-            if (iogsSelect) {
-                for (var i = 0; i < iogsSelect.options.length; i++) {
-                    iogsSelect.options[i].selected = (iogsSelect.options[i].value === '1');
-                }
-                iogsSelect.dispatchEvent(new Event('change', {bubbles: true}));
+            var s = document.getElementById('iogs');
+            if (s) {
+                for (var i = 0; i < s.options.length; i++)
+                    s.options[i].selected = (s.options[i].value === '1');
+                s.dispatchEvent(new Event('change', {bubbles:true}));
             }
-            // Sync checkboxes
-            var iogsCbs = document.querySelectorAll(
-                '#iogs_checkbox_container input[type="checkbox"]'
-            );
-            iogsCbs.forEach(function(cb) {
-                if (cb.checked) cb.click();
-            });
         """)
         time.sleep(0.5)
 
-        # Step 3: Expand Warehouses section
-        status_callback("Expanding Warehouses section...")
-        drv.execute_script("""
-            var fcsContainer = document.getElementById('fcs_checkbox_container');
-            if (fcsContainer) fcsContainer.style.display = 'block';
-            var arrows = document.querySelectorAll('[onclick*="fcs"]');
-            arrows.forEach(function(a) { a.click(); });
-        """)
-        time.sleep(0.5)
+        # Step 2: Warehouses — use Selenium native click on US checkbox
+        status_callback("Looking for Warehouse checkboxes...")
 
-        # Step 4: Check only US warehouse
-        status_callback("Setting Warehouses to US...")
+        # First, ensure the checkbox container is visible via JS
         drv.execute_script("""
-            var fcsCbs = document.querySelectorAll(
-                '#fcs_checkbox_container input[type="checkbox"]'
-            );
-            // Uncheck any that are checked
-            fcsCbs.forEach(function(cb) {
-                if (cb.checked) cb.click();
-            });
+            var c = document.getElementById('fcs_checkbox_container');
+            if (c) { c.style.display = 'block'; c.style.visibility = 'visible'; }
         """)
         time.sleep(0.3)
-        drv.execute_script("""
-            var fcsCbs = document.querySelectorAll(
-                '#fcs_checkbox_container input[type="checkbox"]'
-            );
-            // Now click US
-            fcsCbs.forEach(function(cb) {
-                var label = cb.parentElement;
-                if (label && label.textContent.trim() === 'US') {
-                    if (!cb.checked) cb.click();
-                }
-            });
-        """)
+
+        # Find all warehouse checkboxes using Selenium
+        wh_checkboxes = drv.find_elements(
+            By.CSS_SELECTOR, '#fcs_checkbox_container input[type="checkbox"]'
+        )
+        status_callback(f"Found {len(wh_checkboxes)} warehouse checkboxes.")
+
+        # Debug: log each checkbox label and state
+        for cb in wh_checkboxes:
+            label_text = drv.execute_script(
+                "return arguments[0].parentElement ? arguments[0].parentElement.textContent.trim() : 'unknown';",
+                cb
+            )
+            is_checked = cb.is_selected()
+            status_callback(f"  Warehouse CB: '{label_text}' checked={is_checked}")
+
+        # Uncheck any that are checked (using Selenium click)
+        for cb in wh_checkboxes:
+            if cb.is_selected():
+                try:
+                    cb.click()
+                    time.sleep(0.2)
+                except Exception:
+                    drv.execute_script("arguments[0].click();", cb)
+                    time.sleep(0.2)
+
+        time.sleep(0.3)
+
+        # Now click US checkbox
+        us_clicked = False
+        for cb in wh_checkboxes:
+            label_text = drv.execute_script(
+                "return arguments[0].parentElement ? arguments[0].parentElement.textContent.trim() : '';",
+                cb
+            )
+            if label_text.strip() == "US":
+                status_callback("Clicking US warehouse checkbox...")
+                try:
+                    cb.click()
+                    us_clicked = True
+                except Exception as click_err:
+                    status_callback(f"  Native click failed: {click_err}, trying JS click...")
+                    drv.execute_script("arguments[0].click();", cb)
+                    us_clicked = True
+                time.sleep(0.3)
+                # Verify it's now checked
+                after = cb.is_selected()
+                status_callback(f"  US checkbox after click: checked={after}")
+                break
+
+        if not us_clicked:
+            # Fallback: try clicking by finding label with text US
+            status_callback("US checkbox not found by label, trying XPath...")
+            try:
+                us_label = drv.find_element(
+                    By.XPATH,
+                    "//div[@id='fcs_checkbox_container']//label[normalize-space(text())='US']/input"
+                )
+                us_label.click()
+                status_callback("Clicked US via XPath label/input.")
+            except Exception:
+                try:
+                    us_label = drv.find_element(
+                        By.XPATH,
+                        "//div[@id='fcs_checkbox_container']//label[normalize-space(text())='US']"
+                    )
+                    us_label.click()
+                    status_callback("Clicked US label via XPath.")
+                except Exception as e2:
+                    status_callback(f"Could not find US checkbox: {e2}")
+
         time.sleep(0.5)
 
-        # Step 5: Expand Removal Reasons section
-        status_callback("Expanding Removal Reasons section...")
-        drv.execute_script("""
-            var reasonsContainer = document.getElementById('reasons_checkbox_container');
-            if (reasonsContainer) reasonsContainer.style.display = 'block';
-            var arrows = document.querySelectorAll('[onclick*="reasons"]');
-            arrows.forEach(function(a) { a.click(); });
-        """)
-        time.sleep(0.5)
+        # Step 3: Removal Reasons — click All checkbox
+        status_callback("Looking for Removal Reasons checkboxes...")
 
-        # Step 6: Check All removal reasons
-        status_callback("Setting Removal Reasons to All...")
         drv.execute_script("""
-            var reasonsCbs = document.querySelectorAll(
-                '#reasons_checkbox_container input[type="checkbox"]'
-            );
-            if (reasonsCbs.length > 0) {
-                var allCb = reasonsCbs[0];
-                if (!allCb.checked) {
-                    allCb.click();
-                }
+            var c = document.getElementById('reasons_checkbox_container');
+            if (c) { c.style.display = 'block'; c.style.visibility = 'visible'; }
+        """)
+        time.sleep(0.3)
+
+        reason_checkboxes = drv.find_elements(
+            By.CSS_SELECTOR, '#reasons_checkbox_container input[type="checkbox"]'
+        )
+        status_callback(f"Found {len(reason_checkboxes)} reason checkboxes.")
+
+        for cb in reason_checkboxes:
+            label_text = drv.execute_script(
+                "return arguments[0].parentElement ? arguments[0].parentElement.textContent.trim() : 'unknown';",
+                cb
+            )
+            is_checked = cb.is_selected()
+            status_callback(f"  Reason CB: '{label_text}' checked={is_checked}")
+
+        # Click ALL checkbox (first one), then Sellable, then Unsellable
+        for cb in reason_checkboxes:
+            label_text = drv.execute_script(
+                "return arguments[0].parentElement ? arguments[0].parentElement.textContent.trim() : '';",
+                cb
+            )
+            if not cb.is_selected():
+                status_callback(f"  Clicking reason '{label_text}'...")
+                try:
+                    cb.click()
+                except Exception:
+                    drv.execute_script("arguments[0].click();", cb)
+                time.sleep(0.3)
+                status_callback(f"  '{label_text}' after click: checked={cb.is_selected()}")
+
+        # Also select all <option>s in the reasons <select>
+        drv.execute_script("""
+            var s = document.getElementById('reasons');
+            if (s) {
+                for (var i = 0; i < s.options.length; i++)
+                    s.options[i].selected = true;
             }
         """)
         time.sleep(0.3)
-        # Also select all options in the <select> directly
-        drv.execute_script("""
-            var reasonsSelect = document.getElementById('reasons');
-            if (reasonsSelect) {
-                for (var i = 0; i < reasonsSelect.options.length; i++) {
-                    reasonsSelect.options[i].selected = true;
-                }
-            }
-            // Also check Sellable and Unsellable checkboxes individually
-            var reasonsCbs = document.querySelectorAll(
-                '#reasons_checkbox_container input[type="checkbox"]'
-            );
-            reasonsCbs.forEach(function(cb) {
-                if (!cb.checked) cb.click();
-            });
-        """)
-        time.sleep(0.5)
 
-        # Step 7: Select Check Inventory radio
+        # Step 4: Check Inventory radio
         status_callback("Setting Check Inventory...")
-        drv.execute_script("""
-            var checkInv = document.getElementById('check-inventory');
-            if (checkInv && !checkInv.checked) {
-                checkInv.click();
-            }
-        """)
+        check_inv = drv.find_element(By.ID, "check-inventory")
+        if not check_inv.is_selected():
+            try:
+                check_inv.click()
+            except Exception:
+                drv.execute_script("arguments[0].click();", check_inv)
         time.sleep(0.3)
 
         pipeline.set_state("options", STATE_DONE)
